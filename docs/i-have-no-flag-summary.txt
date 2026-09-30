@@ -1,0 +1,11 @@
+Your AI assistant does what it is told, and any project you open can tell it things.
+
+Here is the risk in plain terms. Coding assistants have your passwords, keys and access, because without them they can't do their job. They also read instruction files that come with whatever project you open, and following those files is what they are built to do. A stranger's text can steer a tool that holds your credentials.
+
+Installing a bad package used to require tricking you. Now it only requires tricking your assistant, which reads more and questions less than you do. The approval prompts don't save you for long. Within a week most of us click "always allow" because the alternative is approving `ls` four hundred times.
+
+There is no off switch yet, no allowlist and no default-off. The files are spreading fast because they are genuinely useful.
+
+For the technical crowd: three tiers. Files that launch things (.mcp.json, .vscode/tasks.json, devcontainer), files that instruct (AGENTS.md, .cursor/rules), and everything the agent reads while working, which is where prompt injection lives.
+
+The full ruleset is in i-have-no-flag.md

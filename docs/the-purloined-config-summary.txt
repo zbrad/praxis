@@ -1,0 +1,11 @@
+Famous, Free, and Open Source. Also Not Safe to Build.
+
+Before you download a project, you can read plenty about it: how many people starred it, how many copied it, what it's for. What you can't find out is what it will do to your computer when you set it up. Nothing on the repository page tells you whether it was scanned, or for what. Stars and copies measure popularity, not safety. A simple automatic notice would have given me the choice. Without one, it is simply not safe.
+
+I found that out the hard way. I downloaded a famous open source project, one that other developers have copied more than 700 times, and ran its normal setup. It's what everyone does. Nine hours later I learned that the setup had quietly changed my settings and undone a protection I had turned on deliberately. No warning. No permission asked.
+
+Here is why that should worry you. When you build someone else's software, its setup steps run as you, with everything you are allowed to do. Your computer can't tell a helpful step from a harmful one. They could have done anything I can do, and they chose not to. This time it was just a shortcut from well-meaning people. But the same door is open to anyone who gets a change into a project you trust, and that person might choose differently.
+
+For the technical crowd: a `prepare` script in the project's own package.json ran `husky`, which wrote core.hooksPath into my .git/config. pnpm's and npm's script blocking covers dependencies, not the project's own scripts (tested on pnpm).
+
+The measured runs, the reproduction script and the fixes: the-purloined-config.md

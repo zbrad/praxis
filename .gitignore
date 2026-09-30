@@ -1,0 +1,10 @@
+.DS_Store
+
+# Measurement data AND the mitigations log are operational/personal, not
+# published research -- both kept in ~/.claude/measurements/ instead
+# (2026-09-24 decision: too specific to one person's own work and machine
+# activity to belong in a shared repo). scripts/repo_scan.py itself is
+# unaffected; point --log at that path instead.
+measurements.tsv
+mitigations.md
+packages/
