@@ -148,6 +148,30 @@ were checked.
   and the pinned commit of the project. The global `core.hooksPath` in run A and B is emulated
   with a throwaway `GIT_CONFIG_GLOBAL`, not the author's real setting.
 
+- **Which scope `git` reports for each route into config, 2026-10-01.**
+  [`scripts/git-config-scope-check.sh`](../scripts/git-config-scope-check.sh) uses a throwaway
+  repo, an empty global config and no system config. Run on Linux with `git` 2.43.0, it exited
+  0. An earlier ad-hoc run of the same checks on Windows with `git` 2.44.0 gave the same
+  scopes for the first four rows; the environment-variable row was added after.
+
+  | Route into config | Scope reported |
+  | --- | --- |
+  | `include.path` in local config, file inside the worktree | `local` |
+  | `git config --worktree` (with `extensions.worktreeConfig`) | `worktree` |
+  | `git -c key=value` | `command` |
+  | `git clone -c key=value` | `local`, written to `.git/config` |
+  | `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` | `command` |
+
+  Two consequences for the open questions. A rule keyed on scope covers includes without extra
+  work, because an included file reports the scope of the file that includes it, but it must
+  decide whether `worktree` counts as protected. And the `clone -c` row is the problem case
+  from the first open question: a value the user passes to make a clone safer is stored as
+  `local`, indistinguishable from one a repo's script wrote. `git`'s documentation defines
+  protected configuration as the `system`, `global` and `command` scopes
+  (`Documentation/git-config.adoc`, read from `git/git` master on 2026-09-30). Include files
+  were tested only where the file sits inside the worktree; an include pointing outside it was
+  not tested.
+
 ### Corrections to earlier drafts
 
 - An earlier draft said `git` does not honour `.gitmodules` as config at all. That is false:
