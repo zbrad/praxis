@@ -28,7 +28,17 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 cd "$WORK"
 
+# Isolate pnpm from the machine's own global config. A machine that has already
+# set `ignoreScripts: true` in pnpm's config.yaml would otherwise block `prepare`
+# and make row 2 fail, which tests the machine, not the claim. On Linux pnpm reads
+# $XDG_CONFIG_HOME/pnpm/config.yaml; on macOS and Windows the global config lives
+# elsewhere, so there this isolation does not apply and a protected machine can
+# still fail row 2 (that is the mitigation working, not a bug in the claim).
+export XDG_CONFIG_HOME="$WORK/.xdg-empty"
+mkdir -p "$XDG_CONFIG_HOME"
+
 echo "pnpm $($PNPM --version), git $(git --version | awk '{print $3}')"
+echo "pnpm ignoreScripts (isolated config): $($PNPM config get ignoreScripts)"
 echo "fixture: $WORK"
 echo
 
