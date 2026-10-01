@@ -1,78 +1,116 @@
-# A Smaller Ask of `git`: Repo-Local Capabilities Should Need Your Say-So
+# RFC: Repo-local capability config should need a per-repo trust decision
 
 *A companion to [The Purloined Config](the-purloined-config.md). Written by Brad Merrill,
 assisted by Claude. The proposal and opinions are the author's; the verification section at
-the end is Claude's, in its voice.*
+the end is Claude's, in its voice. This is a design sketch, not a patch.*
 
-## The ask
+## Summary
 
-A script the repo told my package manager to run wrote `core.hooksPath` into my local
-`.git/config`, and my global "no hooks in forks" rule lost to it, because a repo-local value
-beats a global one.
+A `git` config value in a repository's own `.git/config` should not be able to make `git` run
+a command or send data somewhere until the user has said they trust that repository. Until
+then, such a value should have no effect and `git` should say so.
 
-My first instinct was that `.git/` should be off limits: only `git` writes there, nothing
-else gets direct access. That was wrong, and it took me a minute to see why. Nothing wrote to
-the file directly. The script ran `git config core.hooksPath ...`, which is `git` writing its
-own config through its own front door. A rule saying "only `git` may write `.git/`" allows
-this exactly as it happened. Locking the folder doesn't work anyway: file permissions are per
-user, not per program, and `git` runs as me, so anything else running as me has the same
-rights. Tools that read and write `.git/` without the `git` binary would break too.
+## Problem
 
-So the line isn't about who writes the file. It's about who gets to change what `git` is
-allowed to do. Some config keys are settings. Others are capabilities:
+A build script the repo shipped ran `git config core.hooksPath ...`. That wrote a repo-local
+value, which beats a global one, and it re-enabled hooks that my global "no hooks in forks"
+setting had turned off. `git` did nothing wrong: the script used `git`'s own front door, as
+me, with my permissions. Nothing announced the change, and finding it cost me much of a
+nine-hour day.
 
-`core.hooksPath`, `credential.helper`, `core.sshCommand`, `core.pager`, `core.editor`,
-`core.fsmonitor`, any `alias.*` starting with `!`, `filter.*.clean` and `smudge`,
-`diff.*.textconv`, `url.*.insteadOf`.
+Restricting who may write `.git/` does not fix this. The script called `git config`, so
+"only `git` writes there" allows it exactly as it happened, and file permissions are per
+user, not per program. The line has to be drawn by what the value can make `git` do, not by
+who wrote it.
 
-Those aren't preferences. Every one of them names a command `git` will run, or a place `git`
-will send things.
+## Background: reproducing it
 
-What I want: a repo-local value for a capability key does nothing until I allowlist that
-repo. The same shape as `safe.directory`, which already refuses to operate on a repo owned by
-someone else until you say so.
+The behaviour reproduces on demand, with scripts in this repo, so the case does not rest on
+my account.
 
-Look at what that does to my Tuesday. `husky` still runs. The config write still succeeds.
-The file still changes. And the hooks still don't run, because a repo-local `core.hooksPath`
-means nothing until I say it does. My global rule wins, which is what I set it up to do.
+- [`scripts/repro-husky-hookspath.sh`](../scripts/repro-husky-hookspath.sh) clones the real
+  project at a pinned commit, sets a global `core.hooksPath`, and runs `pnpm install`.
+  - **Run A, pnpm's config empty:** the project's own `prepare` script runs `husky`, and a
+    second value, `.husky/_` in scope `local`, appears in `.git/config`. The effective value
+    is now `.husky/_`: the repo-local value beat the global one.
+  - **Run B, pnpm's global config has `ignoreScripts: true`:** nothing is written and the
+    global value stays in force.
+- [`scripts/verify-trigger-table.sh`](../scripts/verify-trigger-table.sh) does the same with a
+  throwaway fixture instead of a real project, and shows the write happens only on an install
+  that has work to do.
 
-A smaller version would also help: have `git config` print a warning when it sets a
-capability key in local scope. Just say it out loud. Most of my nine hours went because
-nothing announced anything.
+What `git` showed throughout: `git config --show-scope --get-all core.hooksPath` lists both
+values with their scopes, so `git` knows where each value came from. But at no point did it
+say anything when the local value was written. The install output showed only
+`prepare: Done`. That silence, and a global setting losing to a value a script supplied, is
+what I am asking about.
 
-## This isn't a new kind of rule
+## Proposal
 
-`git` already treats some repo-supplied config differently, for security reasons:
+1. **Capability keys.** Treat these as capabilities, not preferences, because each names
+   something `git` will execute or somewhere it will send data: `core.hooksPath`,
+   `credential.helper`, `core.sshCommand`, `core.pager`, `core.editor`, `core.fsmonitor`,
+   `alias.*` values starting with `!`, `filter.*.clean` and `smudge`, `diff.*.textconv`,
+   `url.*.insteadOf`. This is a candidate list. It needs review key by key, and I have not
+   checked each one against `git`'s documentation.
+2. **Trust list.** A capability key set in a repo's local config is ignored, and the next
+   scope (global, then system) applies, until the user allowlists that repo. The shape is
+   `safe.directory`, which already refuses to operate on a repo owned by someone else until
+   you say so.
+3. **Say so.** When a capability key is ignored for lack of trust, or is being set in local
+   scope by `git config`, print a warning. This smaller step is worth having even if 1 and
+   2 are not adopted: it would have cost me seconds, not hours.
+
+Applied to my case: `husky` still runs and the config write still succeeds, but the repo's
+`core.hooksPath` has no effect and `git` tells me why. My global rule stays in force.
+
+## Precedent
+
+`git` already treats some repo-supplied config differently for security reasons:
 
 - **`safe.directory`** refuses to operate on a repo owned by someone else until you
   allowlist it. It came from the CVE-2022-24765 fix.
-- **`.gitmodules` cannot set an executable update command.** `git` reads `.gitmodules` as
-  config, but `submodule.<name>.update` is limited to checkout, rebase, merge or none, "but
-  not '!command' (for security reasons)".
-- **`protocol.allow`** gives `ext::` a default policy of `never` and anything unknown a
-  policy of `user`, so a transport that shells out can't be reached by a recursive
-  submodule clone.
+- **`.gitmodules` cannot set an executable update command.** `submodule.<name>.update` is
+  limited to checkout, rebase, merge or none, "but not '!command' (for security reasons)".
+- **`protocol.allow`** defaults `ext::` to `never` and unknown protocols to `user`, so a
+  transport that shells out cannot be reached by a recursive submodule clone.
 
-## And `git` tried something close to it on hooks
+## Prior attempt, and what it teaches
 
-Version 2.45.1 added two protections around hooks during a clone. Version 2.45.2 reverted
-both. One of them refused any active `core.hooksPath` in the repository's local config during
-a clone. A value passed with `-c` lands there too, so it also blocked
-`clone -c core.hooksPath=/dev/null`, which people pass deliberately to make a clone safer. The
-other protection stopped hooks running during a clone, and broke Git LFS, which installs its
-own hooks then. The release notes call these "overly aggressive 'defense in depth' changes"
-that "broke legitimate use cases like 'git lfs' and 'git annex'".
+Version 2.45.1 added two protections around hooks during a clone, and 2.45.2 reverted both.
+One refused any active `core.hooksPath` in the local config during a clone. A value passed
+with `-c` lands there too, so it also blocked `clone -c core.hooksPath=/dev/null`, which
+people pass deliberately to make a clone safer. The other stopped hooks running during a
+clone and broke Git LFS. The release notes call the changes "overly aggressive 'defense in
+depth' changes" that "broke legitimate use cases like 'git lfs' and 'git annex'".
 
-So this isn't an idea nobody considered. The lesson I take from it is that the protection has
-to be scoped by where a value came from, and that it has to be an allowlist you can set, not
-a blanket refusal.
+This proposal must avoid both failures. It is a per-repo allowlist, not a blanket refusal,
+and it does not change when hooks run. But it does not yet solve the first one, below.
+
+## Open questions
+
+- **Protective values.** `clone -c core.hooksPath=/dev/null` writes a repo-local value.
+  Ignoring it for lack of trust would undo the protection the user asked for. The rule
+  probably has to depend on where a value came from (the command line versus a file), or
+  exempt values that only reduce capability. I do not know the right answer.
+- **The user's own values.** `git` cannot tell a repo-local value the user set from one a
+  script set. A user who sets `core.hooksPath` in a repo on purpose must also allowlist the
+  repo. That may be acceptable, since it is one step, but it is a behavior change.
+- **Existing workflows.** `husky` legitimately writes a repo-local `core.hooksPath`, so every
+  `husky` user would need to allowlist their repos. The upgrade path, and how the allowlist is
+  set per repo, needs design. (Git LFS mattered to the reverted clone-time protection because
+  it installs hook files then; I have not checked whether it writes any config.)
+- **Other entry points.** `include` and `includeIf` files and worktree config can also
+  supply these keys.
 
 ---
 
 ## Verification
 
 Written by Claude, at the author's request, from `git`'s own documentation and source history
-in a working session on 2026-09-24. Read from a blobless clone of `git/git`.
+in a working session on 2026-09-24. Read from a blobless clone of `git/git`. The proposal text
+was rewritten on 2026-09-30 and the citations below were not re-read then; they are as they
+were checked.
 
 - **`safe.directory` came from the CVE-2022-24765 fix.** Earliest commit touching
   `Documentation/config/safe.txt` is `8959555c`, "setup_git_directory(): add an owner check
@@ -99,8 +137,16 @@ in a working session on 2026-09-24. Read from a blobless clone of `git/git`.
   protection breaks `git clone --config core.hooksPath=/dev/null`. The second was reverted in
   `873a466ea`, whose message says it broke Git LFS. Discussed in Junio C Hamano's "Fix various
   overly aggressive protections in 2.45.1 and friends" series, May 2024.
-- **Nothing under `.git/` can be tracked**: `git ls-files --error-unmatch .git/config` →
-  `error: pathspec '.git/config' did not match any file(s) known to git`.
+
+- **Reproduction, 2026-09-30.** Both scripts above were run on Linux with `pnpm` 11.13.1,
+  `git` 2.43.0 and Node v26.8.2. Both exited 0: `verify-trigger-table.sh` reproduced all three
+  rows, and `repro-husky-hookspath.sh` showed run A writing the local value and run B not.
+  The scripts isolate `pnpm`'s global config through `XDG_CONFIG_HOME`, which works on Linux
+  only. An earlier version of `verify-trigger-table.sh` did not isolate it, so on a machine that
+  already had `ignoreScripts: true` set, row 2 failed, which tested the machine and not the
+  claim. The result depends on local state in two ways: the network (the registry and GitHub)
+  and the pinned commit of the project. The global `core.hooksPath` in run A and B is emulated
+  with a throwaway `GIT_CONFIG_GLOBAL`, not the author's real setting.
 
 ### Corrections to earlier drafts
 
@@ -110,11 +156,19 @@ in a working session on 2026-09-24. Read from a blobless clone of `git/git`.
   `safe.directory` is tied to a CVE, so the wording is now "for security reasons".
 - The hooks revert was first described as being about `-c core.hooksPath=/dev/null` alone.
   That was one of two protections reverted, and the other broke Git LFS.
+- The 2026-09-30 rewrite removed a sentence saying libgit2, JGit, go-git and isomorphic-git
+  read and write `.git/` without the `git` binary. That was from Claude's training, never
+  checked, and it sat in the author's voice. It also removed a claim that every key on the
+  capability list runs a command or sends data, and now calls the list a candidate list. The
+  earlier draft and the author's own verification note contradicted each other on this.
+- The 2026-09-30 rewrite also dropped the `git ls-files --error-unmatch .git/config` check.
+  It supported a point about `.git/` that the proposal no longer makes.
 
 ### Where Claude is going on its own word
 
-- That libgit2, JGit, go-git and isomorphic-git read and write `.git/` without calling the
-  `git` binary. This is from training, not from reading each one's source.
-- That the list of capability keys above is complete and that each key on it can run a
-  command or send data elsewhere. This is the author's proposal; Claude did not check each
-  key against `git`'s documentation.
+- That `husky` legitimately writes a repo-local `core.hooksPath`. That is from the first
+  addendum's reading of `husky`'s source, not re-read here. An earlier version of this
+  proposal also said Git LFS writes repo-local hook *configuration*. That was wrong: the 2.45.2
+  revert says only that the clone-time protection broke LFS, which installs hook files.
+- That `include`, `includeIf` and worktree config can supply these keys. This is from
+  Claude's training, not checked, and is listed as an open question for that reason.
