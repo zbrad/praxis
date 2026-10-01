@@ -1,5 +1,6 @@
 # I Have No Flag, and I Must Comply; or, Do Agents Dream of Trusted Repos?
-*Written by Brad Merrill, assisted by Claude.
+*Written by Brad Merrill, assisted by Claude. How the claims were checked is in the
+[addendum](i-have-no-flag-addendum.md).*
 
 I lost nine hours to a line in a package.json. A build ran a lifecycle script, the script
 rewrote my git config, and git hooks I had deliberately turned off started running again.
@@ -9,9 +10,11 @@ The npm half of that is not news, and I want to say so before I complain about a
 has been documented for years —
 [OWASP has a cheat sheet entry telling you to turn lifecycle scripts off](https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html),
 [npm's own docs describe the mechanism](https://docs.npmjs.com/cli/v11/using-npm/scripts),
-and the [Shai-Hulud campaign](https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem)
-in September 2025 used exactly this path to harvest npm, GitHub and cloud credentials at
-scale. I was late to this, not early.
+and the Shai-Hulud campaign in September 2025 used exactly this path.
+[Unit 42's analysis](https://unit42.paloaltonetworks.com/npm-supply-chain-attack/) describes a
+worm that "executes a post-installation script" and harvested npm tokens from `.npmrc` files,
+and [CISA's alert](https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem)
+reports it targeted GitHub tokens and cloud API keys. I was late to this, not early.
 
 A repo can rewrite my git config by getting my package manager to run a script, ok I get it
 now. "There’s a flag for that."
@@ -35,7 +38,9 @@ Things that launch or execute:
 
 This is code execution sourced from a repository. Most of it sits behind a first-use approval
 prompt, which is a real control — and also the control that erodes fastest. Nobody reads the
-four hundredth one.
+four hundredth one. And in an unattended agent run, which is the scenario this piece is about,
+there may be no prompt at all: Claude Code's documentation says project hooks and project MCP
+servers load without asking in its non-interactive modes.
 
 ## Tier two
 
@@ -144,8 +149,9 @@ does sit outside every repo, and it still loses: npm's config precedence is CLI,
 environment, then the **project's** `.npmrc`, then yours. A repository shipping
 `ignore-scripts=false` switches my protection back off. Being user-level is not the same as
 being authoritative — you have to check which one actually wins. For npm the answer is the
-environment; for pnpm it is pnpm's own global config, because pnpm ignores both my `.npmrc`
-and that environment variable.
+environment; for pnpm, in my tests, it was pnpm's own global config, because pnpm ignored both
+my `.npmrc` and `NPM_CONFIG_IGNORE_SCRIPTS`. I did not test pnpm's own `pnpm_config_*`
+variables, which its documentation says override the workspace file.
 
 So the rule needs stating more carefully than I first stated it. A control that lives in a
 prompt applies until the model decides otherwise. A control that lives in config applies
@@ -154,7 +160,9 @@ precedence than you.
 
 ###  A Practical Workaround: Working One Level Up
 
-This is counter intuitive, but don't start your claude CLI in your project folder, open it one level up.  For myself, I create folders which contain repo folders as a related set of project repos and dependency repos.  What it does is ensure that you won't ever pick up agent instructions that might have a chance of executing before your global instructions.  Don't worry, the cli can still find your repo down level down.
+This is counterintuitive, but consider not starting your claude CLI in your project folder: open it one level up. For myself, I create folders which contain repo folders as a related set of project repos and dependency repos. Launching from the parent keeps a repo's `.claude/settings.json`, and so its hooks, from loading, and nested subagents aren't discovered. I believe its `.mcp.json` is skipped too, but the documentation doesn't say.
+
+What it does not do is keep the repo's `CLAUDE.md`, rules or skills out. Claude Code loads those from subdirectories the first time the agent reads a file there; a test on version 2.1.285 showed exactly that (see the addendum). Nor do your user instructions ever load "before" a repo's, in any layout: the documentation says that if they conflict, "Claude may follow either one." The cost is that every sibling repo is now inside the agent's write boundary. The cli can still find your repo one level down.
 
 ### Rule text
 
@@ -238,9 +246,12 @@ And agents build CMake projects too.
 The npm version of this took years to become common knowledge, and the defaults are only
 being fixed now — partially, with the project's own scripts still running.
 
-The agent version shipped in about eighteen months. Nothing gates tier two at all. There is
-no allowlist, no default-off, no equivalent of `ignore-scripts=true`, and the files are
-spreading fast because they are genuinely useful.
+The agent version moved faster. Repo instruction files went from tool-specific conventions
+(`.cursorrules` and Copilot's `copilot-instructions.md`, both in use by autumn 2024) to a
+cross-tool standard (`AGENTS.md`, August 2025) in under a year. Controls exist, but they are
+few, opt-in and easy to miss: Claude Code has `claudeMdExcludes`, and VS Code has settings
+that turn instruction files off. None of the tools checked defaults them off, and the files
+are spreading fast because they are genuinely useful.
 
 I would rather not learn this one the same way.
 
